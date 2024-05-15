@@ -12,6 +12,9 @@
 $ python main.py
 ```
 
+## Low-level MAP
+You can download the pre-computed [low-level map](https://drive.google.com/file/d/1u1-67sNN8ED4PKOtdcy67mU3Dp9omv-8/view) for your experiments.
+
 ## Citation
 If you use this code for your research, please consider citing:
 
