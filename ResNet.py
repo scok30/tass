@@ -1,12 +1,11 @@
-import torch
-import torch.nn as nn
 import math
-import torch.utils.model_zoo as model_zoo
-import torch.nn.functional as F
 import random
 
+from pytorch_grad_cam import GradCAM
 import torch
-import math
+import torch.nn as nn
+import torch.utils.model_zoo as model_zoo
+
 def draw_single_ellipse(H, W):
     pi = math.pi
 
@@ -33,6 +32,7 @@ def draw_single_ellipse(H, W):
     mask = mask * w
 
     return mask.float()
+
 def draw_full_noise(H, W):
     mask = draw_single_ellipse(H, W)
     noisenum = random.randint(2,4)
@@ -165,25 +165,20 @@ class Bottleneck(nn.Module):
 
 
 class ResNet(nn.Module):
-
     def __init__(self, block, layers, num_classes=100):
         self.inplanes = 64
         super(ResNet, self).__init__()
+        self.expansion = block.expansion
         self.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1,
                                bias=False)
         self.bn1 = nn.BatchNorm2d(64)
         self.relu = nn.ReLU(inplace=True)
-        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         self.layer1 = self._make_layer(block, 64, layers[0])
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
         self.layer3 = self._make_layer(block, 256, layers[2], stride=2)
         self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
         self.feature = nn.AvgPool2d(4, stride=1)
         self.fc = nn.Linear(512 * block.expansion, num_classes)
-        self.downsample = 8
-        self.fc_pixel_sal = nn.Conv2d(512 * block.expansion, self.downsample**2, 1)
-        self.fc_pixel_edge = nn.Conv2d(512 * block.expansion, self.downsample ** 2, 1)
-        self.gradcam_net = nn.ModuleList([nn.Conv2d(in_c, 1, 3, padding=1) for in_c in [128,256,512]])
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -209,27 +204,32 @@ class ResNet(nn.Module):
 
         return nn.Sequential(*layers)
 
-    def forward(self, x):
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
-        x = self.layer1(x)
-        x = self.layer2(x)
-        x = self.layer3(x)
-        x = self.layer4(x)
-        dim = x.size()[-1]
+    def forward(self, x, noise=False):
+        h0 = self.conv1(x)
+        h0 = self.bn1(h0)
+        h0 = self.relu(h0)
+        h1 = self.layer1(h0)
+        if noise:
+            h1 = self.inject_noise(h1)
+        h2 = self.layer2(h1)
+        if noise:
+            h2 = self.inject_noise(h2)
+        h3 = self.layer3(h2)
+        if noise:
+            h3 = self.inject_noise(h3)
+        h4 = self.layer4(h3)
+        if noise:
+            h4 = self.inject_noise(h4)
+        dim = h4.size()[-1]
         pool = nn.AvgPool2d(dim, stride=1)
-        x = pool(x)
-        x = x.view(x.size(0), -1)
-        return x
+        f = pool(h4)
+        f = f.view(f.size(0), -1)
+        return f, (h0, h1, h2, h3, h4)
 
     def noise_map(self, map, device):
         h, w = map.shape[-2:]
         mask = draw_full_noise(h, w).unsqueeze(0).to(device)
         return mask
-
-
-
 
     def inject_noise(self, x):
         batch_size, n_channel, h, w = x.shape
@@ -239,34 +239,6 @@ class ResNet(nn.Module):
             select_channel = torch.randperm(n_channel)[:num_select]
             res[i, select_channel] = x[i, select_channel] * self.noise_map(x[i, select_channel], x.device)
         return res
-
-    def forward_pixel(self, x):
-        intermediate_x = []
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
-        x = self.layer1(x)
-        x = self.inject_noise(x)
-        x = self.layer2(x)
-        x = self.inject_noise(x)
-        intermediate_x.append(x)
-        x = self.layer3(x)
-        x = self.inject_noise(x)
-        intermediate_x.append(x)
-        x = self.layer4(x)
-        x = self.inject_noise(x)
-        intermediate_x.append(x)
-        for i in range(len(intermediate_x)):
-            intermediate_x[i] = self.gradcam_net[i](intermediate_x[i])
-        def convert(module,x):
-            x = module(x)
-            spatial_size = x.size()[-2:]
-            x = x.view(x.size(0), self.downsample, self.downsample, *x.size()[-2:]).permute(0, 1, 3, 2, 4)
-            x = x.contiguous().view(x.size(0), self.downsample * spatial_size[0], self.downsample * spatial_size[1])
-            return x
-        x_sal = convert(self.fc_pixel_sal, x)
-        x_edge = convert(self.fc_pixel_edge, x)
-        return x_sal, x_edge, intermediate_x
 
 
 def resnet18_cbam(pretrained=False, **kwargs):
