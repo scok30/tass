@@ -14,6 +14,7 @@ $ python main.py
 
 ## Low-level Map
 You can download the pre-computed low-level map of [CIFAR100](https://drive.google.com/file/d/1u1-67sNN8ED4PKOtdcy67mU3Dp9omv-8/view) and [Tiny-ImageNet](https://drive.google.com/file/d/1Jk9V0tdtkExZm60OW7wa2Q4PnEihPi2n/view?usp=drive_link) for your experiments.
+For better usage, we upload the code for processing low-level map in DFI/, please follow [DFI](https://github.com/backseason/DFI)'s instruction to prepare the model and images.
 
 ## Citation
 If you use this code for your research, please consider citing:
